@@ -3,7 +3,7 @@ extends Control
 ## notes, the play area on the right. The game only starts on the latest
 ## release; updates download just the chunks that changed (see updater.gd).
 
-const VERSION := "1.0.0"
+const VERSION := "1.0.1"
 const RECHECK := 300.0
 
 var net := Net.new()
@@ -234,11 +234,28 @@ func _shade() -> Control:
 
 func _play_page() -> Control:
 	var page := CenterContainer.new()
+	# A soft dark halo keeps the logo clear of the busy backdrop.
+	var g := Gradient.new()
+	g.set_color(0, Color(0, 0, 0, 0.92))
+	g.set_color(1, Color(0, 0, 0, 0))
+	g.add_point(0.6, Color(0, 0, 0, 0.65))
+	var halo_tex := GradientTexture2D.new()
+	halo_tex.gradient = g
+	halo_tex.fill = GradientTexture2D.FILL_RADIAL
+	halo_tex.fill_from = Vector2(0.5, 0.5)
+	halo_tex.fill_to = Vector2(1.0, 0.5)
+	var halo := TextureRect.new()
+	halo.texture = halo_tex
+	halo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	halo.custom_minimum_size = Vector2(720, 720)
+	halo.mouse_filter = MOUSE_FILTER_IGNORE
+	page.add_child(halo)
 	var logo := TextureRect.new()
 	logo.texture = load("res://assets/logo.png")
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	logo.custom_minimum_size = Vector2(440, 368)
+	logo.custom_minimum_size = Vector2(400, 400)
+	logo.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	page.add_child(logo)
 	var tween := create_tween().set_loops()
 	tween.tween_property(logo, "position:y", -12.0, 3.0).as_relative().set_trans(Tween.TRANS_SINE)
