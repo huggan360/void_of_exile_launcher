@@ -1,0 +1,29 @@
+; Engine configuration file.
+config_version=5
+
+[application]
+
+config/name="Void of Exile Launcher"
+config/description="Installs, updates and starts Void of Exile."
+config/version="1.0.0"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://assets/icon.png"
+config/windows_native_icon="res://assets/icon.ico"
+boot_splash/bg_color=Color(0, 0, 0, 1)
+boot_splash/show_image=false
+config/use_custom_user_dir=true
+config/custom_user_dir_name="VoidOfExileLauncher"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=760
+window/stretch/aspect="expand"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)
+textures/vram_compression/import_etc2_astc=true
