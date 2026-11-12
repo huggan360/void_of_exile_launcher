@@ -52,6 +52,14 @@ func installed_version() -> String:
 	return str(installed().get("version", ""))
 
 
+## True when the install is exactly `latest` (a version can be rebuilt and
+## published again, so the build has to match too).
+func is_current(latest: Dictionary) -> bool:
+	var state := installed()
+	return not state.is_empty() and str(state.get("version")) == str(latest.get("version")) \
+			and str(state.get("build", state.get("version"))) == str(latest.get("build", latest.get("version")))
+
+
 func executable() -> String:
 	var state := installed()
 	return install_dir.path_join(str(state.get("launch", ""))) if state.has("launch") else ""

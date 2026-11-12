@@ -3,7 +3,7 @@ extends Control
 ## notes, the play area on the right. The game only starts on the latest
 ## release; updates download just the chunks that changed (see updater.gd).
 
-const VERSION := "1.0.1"
+const VERSION := "1.0.2"
 const RECHECK := 300.0
 
 var net := Net.new()
@@ -620,9 +620,9 @@ func _update_play() -> void:
 	elif have == "":
 		play.text = "INSTALL"
 		status.text = "%s - %s" % [latest.version, Updater._mb(int(latest.platforms[Updater.platform()].get("download", 0)))]
-	elif have != str(latest.version):
+	elif not updater.is_current(latest):
 		play.text = "UPDATE"
-		status.text = "%s is out" % latest.version
+		status.text = "%s is out" % latest.version if have != str(latest.version) else "An update for %s is out" % have
 	else:
 		play.text = "PLAY"
 
@@ -630,7 +630,7 @@ func _update_play() -> void:
 func _on_play() -> void:
 	if accounts.current() == "":
 		_open_login()
-	elif updater.installed_version() != str(latest.get("version", "")):
+	elif not updater.is_current(latest):
 		_install(false)
 	else:
 		_launch()
