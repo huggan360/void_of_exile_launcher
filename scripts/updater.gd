@@ -30,9 +30,10 @@ var _speed := 0.0
 signal _chunk_landed
 
 
-func _init(net_node: Net) -> void:
+## `folder`: "game", or "server_build" for the dedicated server (ServerHost).
+func _init(net_node: Net, folder := "game") -> void:
 	net = net_node
-	install_dir = OS.get_user_data_dir().path_join("game")
+	install_dir = OS.get_user_data_dir().path_join(folder)
 
 
 static func platform() -> String:
@@ -79,7 +80,7 @@ func update(latest: Dictionary, verify := false) -> String:
 	_failed = ""
 	var spec: Dictionary = latest.get("platforms", {}).get(platform(), {})
 	if spec.is_empty():
-		return "Void of Exile isn't available for this system yet."
+		return "This isn't available for your system yet."
 	progress.emit(0, 0, "Reading the release")
 	var r := await net.fetch(str(spec.manifest_url))
 	if not r.ok:

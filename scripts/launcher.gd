@@ -2,13 +2,18 @@ extends Control
 ## Void of Exile launcher: account on the left with the newest release and its
 ## notes, the play area on the right. The game only starts on the latest
 ## release; updates download just the chunks that changed (see updater.gd).
+## Game and Server at the top choose what the big button does: play, or host a
+## server of your own (server_host.gd; signed in only).
 
-const VERSION := "1.0.3"
+const VERSION := "1.1.0"
 const RECHECK := 300.0
 
 var net := Net.new()
 var accounts := Accounts.new()
 var updater: Updater
+var host: ServerHost
+## "game" or "server": what the big button at the bottom does.
+var mode := "game"
 
 var latest := {}
 var me := {}
@@ -38,6 +43,15 @@ var login_pass: LineEdit
 var login_error: Label
 var login_go: Button
 var account_menu: PopupMenu
+# Server page
+var stop_button: Button
+var server_body: Control
+var server_signin: Control
+var server_status: Label
+var server_fields := {}
+var players_title: Label
+var players_list: VBoxContainer
+var server_log: RichTextLabel
 
 
 func _ready() -> void:
@@ -47,9 +61,23 @@ func _ready() -> void:
 	updater = Updater.new(net)
 	add_child(updater)
 	updater.progress.connect(_on_progress)
+	host = ServerHost.new(net)
+	add_child(host)
+	host.updater.progress.connect(_on_progress)
+	host.changed.connect(_on_host_changed)
+	host.log_line.connect(_on_server_log)
+	get_tree().auto_accept_quit = false
 	_build()
 	_refresh_account()
 	_check()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		if host and host.running:
+			status.text = "Stopping your server: saving the players"
+			await host.shutdown()
+		get_tree().quit()
 
 
 func _process(delta: float) -> void:
@@ -193,9 +221,9 @@ func _main() -> Control:
 	top_pad.add_theme_constant_override("margin_top", 18)
 	top_pad.add_child(top)
 	col.add_child(top_pad)
-	for key in ["play", "notes", "settings"]:
+	for key in ["play", "server", "notes", "settings"]:
 		var b := UI.stone_button(Button.new(), 16)
-		b.text = {play = "Play", notes = "Patch notes", settings = "Settings"}[key]
+		b.text = {play = "Game", server = "Server", notes = "Patch notes", settings = "Settings"}[key]
 		b.toggle_mode = true
 		b.pressed.connect(_show_page.bind(key))
 		tabs[key] = b
@@ -205,6 +233,7 @@ func _main() -> Control:
 	stack.size_flags_vertical = SIZE_EXPAND_FILL
 	col.add_child(stack)
 	pages.play = _play_page()
+	pages.server = _server_page()
 	pages.notes = _notes_page()
 	pages.settings = _settings_page()
 	for p: Control in pages.values():
@@ -348,6 +377,12 @@ func _bottom_bar() -> Control:
 	play.custom_minimum_size = Vector2(300, 74)
 	play.pressed.connect(_on_play)
 	row.add_child(play)
+	stop_button = UI.red_button(Button.new(), 30)
+	stop_button.custom_minimum_size = Vector2(300, 74)
+	stop_button.text = "STOP SERVER"
+	stop_button.visible = false
+	stop_button.pressed.connect(func() -> void: host.stop())
+	row.add_child(stop_button)
 
 	installed_label = UI.label("", 14, UI.DIM)
 	installed_label.size_flags_horizontal = SIZE_EXPAND_FILL
@@ -363,6 +398,11 @@ func _show_page(key: String) -> void:
 		tabs[k].set_pressed_no_signal(k == key)
 	if key == "notes":
 		_load_notes()
+	if key in ["play", "server"]:
+		mode = "server" if key == "server" else "game"
+		if mode == "server" and host.latest.is_empty():
+			host.check()
+		_update_play()
 
 
 # --- account ----------------------------------------------------------------------
@@ -371,6 +411,7 @@ func _refresh_account() -> void:
 	me = {}
 	_draw_account()
 	_update_play()
+	_draw_server()
 	var token := accounts.token()
 	if token == "":
 		return
@@ -603,6 +644,11 @@ func _set_thumb(rect: TextureRect, url: String) -> void:
 # --- play / install ---------------------------------------------------------------
 
 func _update_play() -> void:
+	if mode == "server":
+		_update_server_button()
+		return
+	stop_button.visible = false
+	play.visible = true
 	var have := updater.installed_version()
 	installed_label.text = ("Installed  %s" % have) if have != "" else ""
 	if busy:
@@ -628,6 +674,9 @@ func _update_play() -> void:
 
 
 func _on_play() -> void:
+	if mode == "server":
+		_on_server_button()
+		return
 	if accounts.current() == "":
 		_open_login()
 	elif not updater.is_current(latest):
@@ -673,3 +722,300 @@ func _launch() -> void:
 		return
 	status.text = "Void of Exile is running"
 	get_window().mode = Window.MODE_MINIMIZED
+
+
+# --- server -----------------------------------------------------------------------
+
+func _server_page() -> Control:
+	var page := Control.new()
+	var pad := MarginContainer.new()
+	pad.set_anchors_preset(PRESET_FULL_RECT)
+	for m in ["margin_left", "margin_right"]:
+		pad.add_theme_constant_override(m, 26)
+	pad.add_theme_constant_override("margin_top", 16)
+	pad.add_theme_constant_override("margin_bottom", 16)
+	page.add_child(pad)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 18)
+	pad.add_child(row)
+	server_body = row
+
+	# Settings: only what a host may change; the game itself is locked.
+	var left := PanelContainer.new()
+	left.add_theme_stylebox_override("panel", UI.panel(24))
+	left.custom_minimum_size.x = 420
+	var lcol := VBoxContainer.new()
+	lcol.add_theme_constant_override("separation", 10)
+	left.add_child(lcol)
+	lcol.add_child(UI.label("Your server", 28, UI.TEXT, true))
+	server_status = UI.label("", 15, UI.DIM)
+	server_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lcol.add_child(server_status)
+	lcol.add_child(_rule())
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 14)
+	grid.add_theme_constant_override("v_separation", 10)
+	lcol.add_child(grid)
+	_setting(grid, "name", "Name", UI.field("My Void Realm"))
+	_setting(grid, "motd", "Message", UI.field("Welcome to the Void."))
+	_setting(grid, "max_players", "Players", _number(1, 300))
+	_setting(grid, "port", "Port", _number(1024, 65000))
+	var memory := UI.stone_button(OptionButton.new(), 15)
+	for mb in [2048, 3072, 4096, 6144, 8192, 0]:
+		memory.add_item("No limit" if mb == 0 else "%d GB" % (mb / 1024))
+		memory.set_item_metadata(memory.item_count - 1, mb)
+	_setting(grid, "max_memory_mb", "Memory", memory)
+	_setting(grid, "player_collision", "Player contact", _toggle())
+	_setting(grid, "public", "Listed for all", _toggle())
+	var hint := UI.label("Servers play exactly like the official ones: only these settings can change. "
+			+ "Forward UDP to the port and the port + 1 for players outside your network.", 13, Color(UI.DIM, 0.85))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lcol.add_child(hint)
+	row.add_child(left)
+
+	# Players and the log.
+	var right := VBoxContainer.new()
+	right.size_flags_horizontal = SIZE_EXPAND_FILL
+	right.add_theme_constant_override("separation", 14)
+	var who := PanelContainer.new()
+	who.add_theme_stylebox_override("panel", UI.panel(22))
+	who.size_flags_vertical = SIZE_EXPAND_FILL
+	var wcol := VBoxContainer.new()
+	wcol.add_theme_constant_override("separation", 8)
+	who.add_child(wcol)
+	players_title = UI.label("Players", 22, UI.TEXT, true)
+	wcol.add_child(players_title)
+	var pscroll := ScrollContainer.new()
+	pscroll.size_flags_vertical = SIZE_EXPAND_FILL
+	pscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	players_list = VBoxContainer.new()
+	players_list.size_flags_horizontal = SIZE_EXPAND_FILL
+	players_list.add_theme_constant_override("separation", 6)
+	pscroll.add_child(players_list)
+	wcol.add_child(pscroll)
+	right.add_child(who)
+	var logs := PanelContainer.new()
+	logs.add_theme_stylebox_override("panel", UI.panel(18))
+	logs.size_flags_vertical = SIZE_EXPAND_FILL
+	var lgcol := VBoxContainer.new()
+	logs.add_child(lgcol)
+	lgcol.add_child(UI.label("Log", 17, UI.DIM))
+	server_log = RichTextLabel.new()
+	server_log.scroll_following = true
+	server_log.size_flags_vertical = SIZE_EXPAND_FILL
+	server_log.add_theme_font_size_override("normal_font_size", 13)
+	server_log.add_theme_color_override("default_color", Color(UI.TEXT, 0.82))
+	server_log.selection_enabled = true
+	lgcol.add_child(server_log)
+	right.add_child(logs)
+	row.add_child(right)
+
+	# Signed out: hosting needs an account.
+	var gate := CenterContainer.new()
+	gate.set_anchors_preset(PRESET_FULL_RECT)
+	var box := PanelContainer.new()
+	box.add_theme_stylebox_override("panel", UI.panel(30))
+	var gcol := VBoxContainer.new()
+	gcol.add_theme_constant_override("separation", 12)
+	box.add_child(gcol)
+	gcol.add_child(UI.label("Host a server", 28, UI.TEXT, true))
+	var why := UI.label("Sign in to run a Void of Exile server. It is tied to your account.", 16, UI.DIM)
+	why.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	why.custom_minimum_size.x = 380
+	gcol.add_child(why)
+	var sign := UI.stone_button(Button.new(), 17)
+	sign.text = "Sign in"
+	sign.pressed.connect(_open_login)
+	gcol.add_child(sign)
+	gate.add_child(box)
+	page.add_child(gate)
+	server_signin = gate
+	_fill_settings()
+	_draw_server()
+	return page
+
+
+func _setting(grid: GridContainer, key: String, title: String, control: Control) -> void:
+	var l := UI.label(title, 16, UI.DIM)
+	l.custom_minimum_size.x = 120
+	grid.add_child(l)
+	control.size_flags_horizontal = SIZE_EXPAND_FILL
+	grid.add_child(control)
+	server_fields[key] = control
+	if control is LineEdit:
+		(control as LineEdit).text_changed.connect(func(_t: String) -> void: _settings_changed())
+	elif control is SpinBox:
+		(control as SpinBox).value_changed.connect(func(_v: float) -> void: _settings_changed())
+	elif control is OptionButton:
+		(control as OptionButton).item_selected.connect(func(_i: int) -> void: _settings_changed())
+	elif control is Button:
+		(control as Button).toggled.connect(func(on: bool) -> void:
+			(control as Button).text = "On" if on else "Off"
+			_settings_changed())
+
+
+func _number(low: int, high: int) -> SpinBox:
+	var n := SpinBox.new()
+	n.min_value = low
+	n.max_value = high
+	n.rounded = true
+	var e := n.get_line_edit()
+	var look := UI.field("")
+	for state in ["normal", "focus"]:
+		e.add_theme_stylebox_override(state, look.get_theme_stylebox(state))
+	e.add_theme_font_size_override("font_size", 17)
+	e.custom_minimum_size.y = 42
+	look.free()
+	return n
+
+
+func _toggle() -> Button:
+	var b := UI.stone_button(Button.new(), 15)
+	b.toggle_mode = true
+	b.text = "Off"
+	return b
+
+
+func _fill_settings() -> void:
+	var s := host.settings
+	(server_fields.name as LineEdit).text = str(s.name)
+	(server_fields.motd as LineEdit).text = str(s.motd)
+	(server_fields.max_players as SpinBox).set_value_no_signal(int(s.max_players))
+	(server_fields.port as SpinBox).set_value_no_signal(int(s.port))
+	var memory := server_fields.max_memory_mb as OptionButton
+	for i in memory.item_count:
+		if int(memory.get_item_metadata(i)) == int(s.max_memory_mb):
+			memory.select(i)
+	for key in ["player_collision", "public"]:
+		var b := server_fields[key] as Button
+		b.set_pressed_no_signal(bool(s[key]))
+		b.text = "On" if bool(s[key]) else "Off"
+
+
+func _settings_changed() -> void:
+	var memory := server_fields.max_memory_mb as OptionButton
+	host.save_settings({
+		name = (server_fields.name as LineEdit).text.strip_edges().left(40) if (server_fields.name as LineEdit).text.strip_edges() != "" else "My Void Realm",
+		motd = (server_fields.motd as LineEdit).text.strip_edges().left(110),
+		max_players = int((server_fields.max_players as SpinBox).value),
+		port = int((server_fields.port as SpinBox).value),
+		max_memory_mb = int(memory.get_item_metadata(memory.selected)) if memory.selected >= 0 else 4096,
+		player_collision = (server_fields.player_collision as Button).button_pressed,
+		public = (server_fields.public as Button).button_pressed,
+	})
+	if host.running:
+		server_status.text = "Running. Changes apply the next time it starts."
+
+
+func _draw_server() -> void:
+	if server_body == null:
+		return
+	var signed := accounts.current() != ""
+	server_signin.visible = not signed
+	server_body.visible = signed
+	for key: String in server_fields:
+		var c: Control = server_fields[key]
+		if c is LineEdit: (c as LineEdit).editable = not host.running
+		elif c is SpinBox: (c as SpinBox).editable = not host.running
+		elif c is BaseButton: (c as BaseButton).disabled = host.running
+	if host.running:
+		var count := host.players.size()
+		server_status.text = ("Stopping: saving the players" if host.stopping else
+			"Running on port %d - %s" % [int(host.settings.port), str(host.info.get("version", ""))])
+		players_title.text = "Players  %d / %d" % [count, int(host.settings.max_players)]
+	else:
+		var have := host.updater.installed_version()
+		server_status.text = ("Installed  %s" % have) if have != "" else "Not installed yet"
+		players_title.text = "Players"
+	for c in players_list.get_children():
+		c.queue_free()
+	if host.running and host.players.is_empty():
+		players_list.add_child(UI.label("Nobody is on yet.", 15, UI.DIM))
+	elif not host.running:
+		players_list.add_child(UI.label("Start the server to see who plays on it.", 15, UI.DIM))
+	for p: Dictionary in host.players:
+		var line := PanelContainer.new()
+		line.add_theme_stylebox_override("panel", UI.card(10, 0.9))
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 14)
+		line.add_child(r)
+		var n := UI.label(str(p.get("name", "?")), 17, UI.BAD if p.get("dead", false) else UI.TEXT, true)
+		n.custom_minimum_size.x = 150
+		r.add_child(n)
+		r.add_child(UI.label("%s %d" % [str(p.get("class_id", "")).capitalize(), int(p.get("level", 0))], 15, UI.GOLD))
+		var where := UI.label(str(p.get("place", "")), 15, UI.DIM)
+		where.size_flags_horizontal = SIZE_EXPAND_FILL
+		r.add_child(where)
+		r.add_child(UI.label("%d ms" % int(p.get("ping", 0)), 14, UI.DIM))
+		var kick := UI.red_button(Button.new(), 14)
+		kick.text = "Kick"
+		kick.pressed.connect(host.kick.bind(str(p.get("name", ""))))
+		r.add_child(kick)
+		players_list.add_child(line)
+
+
+func _on_host_changed() -> void:
+	_draw_server()
+	if mode == "server":
+		_update_play()
+
+
+func _on_server_log(line: String) -> void:
+	if server_log:
+		server_log.add_text(line + "\n")
+
+
+func _update_server_button() -> void:
+	var have := host.updater.installed_version()
+	installed_label.text = ("Server  %s" % have) if have != "" else ""
+	play.visible = not host.running
+	stop_button.visible = host.running
+	stop_button.disabled = host.stopping
+	if busy:
+		return
+	play.disabled = false
+	if accounts.current() == "":
+		play.text = "SIGN IN"
+	elif host.latest.is_empty():
+		play.text = "START"
+		play.disabled = true
+		status.text = "Looking for the server build"
+	elif not host.available():
+		play.text = "SOON"
+		play.disabled = true
+		status.text = "The server runs on Linux for now"
+	elif have == "":
+		play.text = "INSTALL"
+		status.text = "Server %s - %s" % [host.latest.version, Updater._mb(int(host.latest.platforms[Updater.platform()].get("download", 0)))]
+	elif not host.updater.is_current(host.latest):
+		play.text = "UPDATE"
+		status.text = "Server %s is out" % host.latest.version
+	else:
+		play.text = "START"
+		status.text = "Your server is running" if host.running else ""
+
+
+func _on_server_button() -> void:
+	if accounts.current() == "":
+		_open_login()
+	elif not host.updater.is_current(host.latest):
+		if busy or host.latest.is_empty():
+			return
+		busy = true
+		play.disabled = true
+		play.text = "INSTALLING"
+		bar.visible = true
+		bar.value = 0
+		var err := await host.updater.update(host.latest)
+		busy = false
+		bar.visible = false
+		status.text = err if err != "" else "Server ready"
+		_draw_server()
+		_update_play()
+	else:
+		play.disabled = true
+		status.text = "Starting your server"
+		var err := await host.start(accounts.current(), accounts.token())
+		status.text = err if err != "" else "Your server is running"
+		_update_play()
