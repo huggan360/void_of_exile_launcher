@@ -7,8 +7,8 @@ extends Node
 ## NetServer._admin: "VRADMIN <token> players|kick <name>|stop" on the status
 ## port, answered only on this computer, only with the token set here).
 ##
-## Its files live in the launcher's data folder: server_build/ (the build) and
-## server/ (server.cfg with the host's settings and key, and the world saves).
+## The build goes in the library (Paths.server_dir()); server/ in the launcher's
+## data folder keeps server.cfg (the host's settings and key) and the world saves.
 
 signal changed
 signal log_line(text: String)
@@ -42,7 +42,7 @@ var _stop_left := 0.0
 
 func _init(net_node: Net) -> void:
 	net = net_node
-	updater = Updater.new(net_node, "server_build")
+	updater = Updater.new(net_node, Paths.server_dir())
 	add_child(updater)
 	load_settings()
 

@@ -31,14 +31,50 @@ jobs:
       - name: Export Linux, Windows and macOS
         run: ./build.sh ./godot Linux Windows macOS && ls -la build
 
+      - name: Signing tools and NSIS
+        run: sudo apt-get update -q && sudo apt-get install -yq nsis osslsigncode zip
+
+      # Windows code signing: set the repo secrets WINDOWS_CERT_PFX (the .pfx, base64) and
+      # WINDOWS_CERT_PASSWORD. Without them the files ship unsigned (SmartScreen warns on first run).
+      - name: Sign the Windows launcher
+        env:
+          PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if [ -z "$PFX" ]; then echo "No certificate: the launcher stays unsigned"; exit 0; fi
+          echo "$PFX" | base64 -d > cert.pfx
+          sign() { osslsigncode sign -pkcs12 cert.pfx -pass "$PASS" -n "Void of Exile" -i https://void.plainshow.se \
+            -h sha256 -t http://timestamp.digicert.com -in "$1" -out "$1.signed" && mv "$1.signed" "$1"; }
+          sign build/windows/VoidOfExileLauncher.exe
+          (cd build/windows && rm -f ../VoidOfExileLauncher-Windows.zip && zip -q -9 ../VoidOfExileLauncher-Windows.zip VoidOfExileLauncher.exe)
+
+      - name: Online installer
+        env:
+          PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+          PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          version="$(sed -nE 's/^const VERSION := "([^"]+)".*/\1/p' scripts/launcher.gd)"
+          makensis -V2 -DVERSION="$version" installer/setup.nsi
+          if [ -n "$PFX" ]; then
+            osslsigncode sign -pkcs12 cert.pfx -pass "$PASS" -n "Void of Exile Setup" -i https://void.plainshow.se \
+              -h sha256 -t http://timestamp.digicert.com -in build/VoidOfExileSetup.exe -out build/VoidOfExileSetup.signed.exe
+            mv build/VoidOfExileSetup.signed.exe build/VoidOfExileSetup.exe
+          fi
+          rm -f cert.pfx
+          ls -la build
+
       - uses: actions/upload-artifact@v4
         with:
           name: launcher
-          path: build/*.zip
+          path: |
+            build/*.zip
+            build/VoidOfExileSetup.exe
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/*.zip
+          files: |
+            build/*.zip
+            build/VoidOfExileSetup.exe
           make_latest: true

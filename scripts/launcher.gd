@@ -5,7 +5,7 @@ extends Control
 ## Game and Server at the top choose what the big button does: play, or host a
 ## server of your own (server_host.gd; signed in only).
 
-const VERSION := "1.1.0"
+const VERSION := "1.2.0"
 const RECHECK := 300.0
 
 var net := Net.new()
@@ -52,13 +52,16 @@ var server_fields := {}
 var players_title: Label
 var players_list: VBoxContainer
 var server_log: RichTextLabel
+var library_label: Label
+var launcher_update: Button
+var _launcher_latest := {}
 
 
 func _ready() -> void:
 	theme = UI.theme()
 	get_window().min_size = Vector2i(1060, 640)
 	add_child(net)
-	updater = Updater.new(net)
+	updater = Updater.new(net, Paths.game_dir())
 	add_child(updater)
 	updater.progress.connect(_on_progress)
 	host = ServerHost.new(net)
@@ -70,6 +73,7 @@ func _ready() -> void:
 	_build()
 	_refresh_account()
 	_check()
+	_check_launcher()
 
 
 func _notification(what: int) -> void:
@@ -183,6 +187,10 @@ func _sidebar() -> Control:
 	v.size_flags_horizontal = SIZE_EXPAND_FILL
 	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	foot.add_child(v)
+	launcher_update = UI.green_button(Button.new(), 14)
+	launcher_update.visible = false
+	launcher_update.pressed.connect(_update_launcher)
+	col.add_child(launcher_update)
 	col.add_child(foot)
 	return side
 
@@ -316,21 +324,25 @@ func _settings_page() -> Control:
 	col.add_theme_constant_override("separation", 12)
 	box.add_child(col)
 	col.add_child(UI.label("Settings", 28, UI.TEXT, true))
-	col.add_child(UI.label("Game folder", 15, UI.DIM))
-	var path := UI.label(updater.install_dir, 15)
-	path.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
-	col.add_child(path)
+	col.add_child(UI.label("Install folder (the game and your server)", 15, UI.DIM))
+	library_label = UI.label(Paths.library(), 15)
+	library_label.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	col.add_child(library_label)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 10)
 	var open := UI.stone_button(Button.new(), 15)
 	open.text = "Open folder"
 	open.pressed.connect(func() -> void:
-		DirAccess.make_dir_recursive_absolute(updater.install_dir)
-		OS.shell_open(updater.install_dir))
+		DirAccess.make_dir_recursive_absolute(Paths.library())
+		OS.shell_open(Paths.library()))
+	var change := UI.stone_button(Button.new(), 15)
+	change.text = "Change folder"
+	change.pressed.connect(_pick_library)
 	var verify := UI.stone_button(Button.new(), 15)
 	verify.text = "Repair files"
 	verify.pressed.connect(func() -> void: _install(true))
 	row.add_child(open)
+	row.add_child(change)
 	row.add_child(verify)
 	col.add_child(row)
 	col.add_child(_rule())
@@ -1019,3 +1031,95 @@ func _on_server_button() -> void:
 		var err := await host.start(accounts.current(), accounts.token())
 		status.text = err if err != "" else "Your server is running"
 		_update_play()
+
+
+# --- install folder and the launcher's own updates --------------------------------
+
+## Moves the game and the server build to another folder (or, across drives,
+## installs them there again).
+func _pick_library() -> void:
+	if busy or host.running:
+		status.text = "Wait until the download or your server is done."
+		return
+	var dialog := FileDialog.new()
+	dialog.file_mode = FileDialog.FILE_MODE_OPEN_DIR
+	dialog.access = FileDialog.ACCESS_FILESYSTEM
+	dialog.use_native_dialog = true
+	dialog.title = "Install Void of Exile in"
+	dialog.current_dir = Paths.library()
+	add_child(dialog)
+	dialog.dir_selected.connect(func(dir: String) -> void:
+		dialog.queue_free()
+		_move_library(dir))
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered_ratio(0.6)
+
+
+func _move_library(root: String) -> void:
+	if root == "" or root == Paths.library():
+		return
+	var moved := true
+	for pair: Array in [[updater, Paths.game_dir(root)], [host.updater, Paths.server_dir(root)]]:
+		var u: Updater = pair[0]
+		var target: String = pair[1]
+		DirAccess.make_dir_recursive_absolute(target.get_base_dir())
+		if DirAccess.dir_exists_absolute(u.install_dir) and not DirAccess.dir_exists_absolute(target):
+			if DirAccess.rename_absolute(u.install_dir, target) != OK:
+				moved = false
+		u.install_dir = target
+	Paths.set_library(root)
+	library_label.text = Paths.library()
+	status.text = "Moved to %s" % root if moved else "Couldn't move the files there: they will be installed again in the new folder."
+	_update_play()
+	_draw_server()
+
+
+## The newest launcher (mirrored on void.plainshow.se by the release sync).
+func _check_launcher() -> void:
+	var r := await net.fetch("/files/launcher/latest.json")
+	if not r.ok or _newer(str(r.data.get("version", "")), VERSION) <= 0:
+		return
+	_launcher_latest = r.data
+	launcher_update.text = "Update the launcher to %s" % str(r.data.version)
+	launcher_update.visible = true
+
+
+## Windows: fetch the online installer and let it replace this launcher (it
+## starts the new one when done). Elsewhere: the download page.
+func _update_launcher() -> void:
+	if OS.get_name() != "Windows":
+		OS.shell_open(Net.SITE + "/download")
+		return
+	if host.running or busy:
+		status.text = "Stop your server and wait for downloads before updating the launcher."
+		return
+	launcher_update.disabled = true
+	status.text = "Downloading the launcher update"
+	var r := await net.fetch("/files/launcher/VoidOfExileSetup.exe", HTTPClient.METHOD_GET, {}, "", false)
+	if not r.ok:
+		launcher_update.disabled = false
+		status.text = "Couldn't download the update: " + r.error
+		return
+	var setup := OS.get_user_data_dir().path_join("VoidOfExileSetup.exe")
+	var f := FileAccess.open(setup, FileAccess.WRITE)
+	f.store_buffer(r.body)
+	f.close()
+	# /S: silent, into this launcher's own folder (NSIS reads /D= last).
+	var install_root := OS.get_executable_path().get_base_dir().get_base_dir()
+	if OS.create_process(setup, ["/S", "/D=" + install_root.replace("/", "\\")]) <= 0:
+		launcher_update.disabled = false
+		status.text = "Couldn't start the update."
+		return
+	get_tree().quit()
+
+
+## >0 when version a is newer than b ("1.10.0" > "1.9.2").
+static func _newer(a: String, b: String) -> int:
+	var x := a.split(".")
+	var y := b.split(".")
+	for i in maxi(x.size(), y.size()):
+		var p := int(x[i]) if i < x.size() else 0
+		var q := int(y[i]) if i < y.size() else 0
+		if p != q:
+			return 1 if p > q else -1
+	return 0

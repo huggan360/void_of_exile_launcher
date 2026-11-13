@@ -26,6 +26,20 @@ talks to its server on the status port (port + 1) with `VRADMIN <token> players|
 computer, with a token it sets in `VOID_ADMIN_TOKEN`. Stop and closing the launcher save every player first.
 Linux only for now, like the game.
 
+## Windows
+
+The website's Windows button gives `VoidOfExileSetup.exe` (`installer/setup.nsi`, NSIS): a small online
+installer that downloads the newest launcher from void.plainshow.se (the Pi mirrors every launcher release into
+`/files/launcher/`), installs per user into `%LOCALAPPDATA%\Programs\Void of Exile\Launcher` (any folder can
+be picked; no admin prompt), and adds Start menu and desktop shortcuts and an Apps & features entry with an
+uninstaller. The game and the server build go beside it (`Game`, `Server`; Settings > Change folder moves them,
+`scripts/paths.gd`). The launcher reads `/files/launcher/latest.json` and updates itself by running the
+installer silently (`/S /D=<folder>`).
+
+Signing: set the repo secrets `WINDOWS_CERT_PFX` (a code signing certificate, .pfx in base64) and
+`WINDOWS_CERT_PASSWORD`; the workflow then signs the launcher and the installer with osslsigncode. Without
+them both ship unsigned and SmartScreen warns the first time.
+
 ## Build
 
 ```bash
@@ -42,6 +56,8 @@ The macOS build is ad-hoc signed and not notarized: open it with right click > O
 | --- | --- |
 | `scripts/launcher.gd` | Screen: sidebar, play area, login, patch notes, settings |
 | `scripts/updater.gd` | Install and delta update from the release store (game and server) |
+| `scripts/paths.gd` | Install folder (library): game and server build |
+| `installer/setup.nsi` | Windows online installer |
 | `scripts/server_host.gd` | The hosted server: install, settings, key, start/stop, log, players, kick |
 | `scripts/accounts.gd` | Saved sessions |
 | `scripts/net.gd` | HTTP helpers |

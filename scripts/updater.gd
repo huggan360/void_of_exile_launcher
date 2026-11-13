@@ -30,10 +30,10 @@ var _speed := 0.0
 signal _chunk_landed
 
 
-## `folder`: "game", or "server_build" for the dedicated server (ServerHost).
-func _init(net_node: Net, folder := "game") -> void:
+## `folder`: where to install (Paths.game_dir(), Paths.server_dir()).
+func _init(net_node: Net, folder: String) -> void:
 	net = net_node
-	install_dir = OS.get_user_data_dir().path_join(folder)
+	install_dir = folder
 
 
 static func platform() -> String:
