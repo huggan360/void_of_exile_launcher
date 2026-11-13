@@ -3,7 +3,7 @@ extends Control
 ## notes, the play area on the right. The game only starts on the latest
 ## release; updates download just the chunks that changed (see updater.gd).
 
-const VERSION := "1.0.2"
+const VERSION := "1.0.3"
 const RECHECK := 300.0
 
 var net := Net.new()
@@ -492,7 +492,7 @@ func _login_overlay() -> Control:
 	login_go.text = "Enter"
 	login_go.size_flags_horizontal = SIZE_EXPAND_FILL
 	login_go.pressed.connect(_sign_in)
-	var cancel := UI.stone_button(Button.new(), 17)
+	var cancel := UI.red_button(Button.new(), 17)
 	cancel.text = "Cancel"
 	cancel.pressed.connect(func() -> void: login.visible = false)
 	row.add_child(login_go)

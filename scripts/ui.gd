@@ -96,26 +96,37 @@ static func stone_button(b: Button, size := 17) -> Button:
 	return b
 
 
-## The big green play stone.
+## The game's coloured stones: green to play and buy, red to cancel and leave.
 static func green_button(b: Button, size := 30) -> Button:
-	var faces := {normal = Color("2f9e44"), hover = Color("3cb755"), pressed = Color("23743a"), hover_pressed = Color("23743a"), disabled = Color("2a2e2b")}
+	return _coloured(b, "green", size, Color("f3ffef"))
+
+
+static func red_button(b: Button, size := 17) -> Button:
+	return _coloured(b, "red", size, Color("fff0f0"))
+
+
+static func _coloured(b: Button, colour: String, size: int, text: Color) -> Button:
+	var faces := {normal = [false, Color.WHITE], hover = [false, Color(1.2, 1.2, 1.2)], pressed = [true, Color.WHITE],
+		hover_pressed = [true, Color(1.1, 1.1, 1.1)], disabled = [false, Color(0.45, 0.45, 0.45)]}
 	for state: String in faces:
-		var box := StyleBoxFlat.new()
-		box.bg_color = faces[state]
-		box.border_color = Color("0b2410")
-		box.set_border_width_all(3)
-		box.shadow_color = Color(0.25, 0.86, 0.39, 0.0 if state == "disabled" else 0.28)
-		box.shadow_size = 14
+		var down: bool = faces[state][0]
+		var box := StyleBoxTexture.new()
+		box.texture = _texture("res://assets/ui/button_%s%s.png" % ["pressed_" if down else "", colour], Vector2i(192, 48))
+		box.texture_margin_left = 9
+		box.texture_margin_right = 9
+		box.texture_margin_top = 9
+		box.texture_margin_bottom = 9
+		box.modulate_color = faces[state][1]
 		box.content_margin_left = 30
 		box.content_margin_right = 30
-		box.content_margin_top = 12 if state.ends_with("pressed") else 9
-		box.content_margin_bottom = 9 if state.ends_with("pressed") else 12
+		box.content_margin_top = 12 if down else 8
+		box.content_margin_bottom = 8 if down else 12
 		b.add_theme_stylebox_override(state, box)
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 	b.add_theme_font_override("font", bold())
 	b.add_theme_font_size_override("font_size", size)
 	for c in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
-		b.add_theme_color_override(c, Color("f3ffef"))
+		b.add_theme_color_override(c, text)
 	b.add_theme_color_override("font_disabled_color", DIM)
 	b.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	return b
