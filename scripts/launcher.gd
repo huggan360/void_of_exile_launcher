@@ -5,7 +5,7 @@ extends Control
 ## Game and Server at the top choose what the big button does: play, or host a
 ## server of your own (server_host.gd; signed in only).
 
-const VERSION := "1.2.0"
+const VERSION := "1.2.1"
 const RECHECK := 300.0
 
 var net := Net.new()
